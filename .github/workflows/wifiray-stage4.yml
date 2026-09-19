@@ -5,6 +5,7 @@ on:
     paths:
       - 'ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip'
       - '.github/workflows/wifiray-stage4.yml'
+      - 'build-overlay/**'
   workflow_dispatch:
 
 permissions:
@@ -58,6 +59,7 @@ jobs:
           echo 'b4debb6189a9bd999d507aeb052bcd12bbc2a180a7582135bad392674090df7e  ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip' | sha256sum -c -
           unzip -qo ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip -d .
           sha256sum -c SHA256_MANIFEST.txt
+          python3 build-overlay/hkdf_fix.py
       - uses: espressif/install-esp-idf-action@v1
         with:
           version: v5.5.1
