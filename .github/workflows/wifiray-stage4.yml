@@ -1,0 +1,154 @@
+name: WIFIray | Stage 4 gated build
+
+on:
+  push:
+    paths:
+      - 'ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip'
+      - '.github/workflows/wifiray-stage4.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wifiray-stage4-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore audited source and check hashes
+        run: |
+          set -euo pipefail
+          test -s ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip
+          echo 'b4debb6189a9bd999d507aeb052bcd12bbc2a180a7582135bad392674090df7e  ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip' | sha256sum -c -
+          unzip -q ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip -d .
+          sha256sum -c SHA256_MANIFEST.txt
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install Python protocol dependency
+        run: python -m pip install cryptography==46.0.7
+      - name: Enforce Kotlin host compiler availability
+        run: command -v kotlinc
+      - name: Run C++ sanitizers, Python protocol and Kotlin tests
+        run: bash ci/test_local.sh
+
+  firmware:
+    name: ESP-IDF ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [esp32s3, esp32c6, esp32]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore audited source and check hashes
+        run: |
+          set -euo pipefail
+          test -s ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip
+          echo 'b4debb6189a9bd999d507aeb052bcd12bbc2a180a7582135bad392674090df7e  ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip' | sha256sum -c -
+          unzip -q ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip -d .
+          sha256sum -c SHA256_MANIFEST.txt
+      - uses: espressif/install-esp-idf-action@v1
+        with:
+          version: v5.5.1
+      - name: Build exact chip and merge FULL image
+        working-directory: firmware
+        run: |
+          set -euo pipefail
+          test ! -e sdkconfig
+          idf.py set-target '${{ matrix.target }}'
+          idf.py build
+          idf.py merge-bin -o 'ESPhub_Zero_${{ matrix.target }}_FULL.bin' -f raw
+      - name: Check target, boot offset, partitions and flash capacity
+        run: |
+          set -euo pipefail
+          python ci/verify_firmware.py --target '${{ matrix.target }}' | tee firmware/build/INTEGRITY.json
+          cd firmware/build
+          sha256sum 'ESPhub_Zero_${{ matrix.target }}_FULL.bin' > SHA256SUMS.txt
+          test -s flasher_args.json
+          test -s bootloader/bootloader.bin
+          test -s partition_table/partition-table.bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wifiray-stage4-${{ matrix.target }}-FULL
+          path: |
+            firmware/build/ESPhub_Zero_${{ matrix.target }}_FULL.bin
+            firmware/build/INTEGRITY.json
+            firmware/build/SHA256SUMS.txt
+            firmware/build/flasher_args.json
+          if-no-files-found: error
+          retention-days: 30
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore audited source and check hashes
+        run: |
+          set -euo pipefail
+          test -s ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip
+          echo 'b4debb6189a9bd999d507aeb052bcd12bbc2a180a7582135bad392674090df7e  ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip' | sha256sum -c -
+          unzip -q ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip -d .
+          sha256sum -c SHA256_MANIFEST.txt
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Compile Android debug APK
+        working-directory: android
+        run: gradle --no-daemon --stacktrace :app:assembleDebug
+      - name: Create verified APK artifact
+        run: |
+          set -euo pipefail
+          test -s android/app/build/outputs/apk/debug/app-debug.apk
+          mkdir -p dist
+          cp android/app/build/outputs/apk/debug/app-debug.apk dist/WIFIray_STAGE4_debug.apk
+          (cd dist && sha256sum *.apk > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wifiray-stage4-android
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  package:
+    name: Publish only after all builds and host tests pass
+    needs: [quality, firmware, android]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wifiray-stage4-*
+          path: artifacts
+          merge-multiple: false
+      - name: Enforce exactly 1 APK and 3 FULL images
+        run: |
+          set -euo pipefail
+          mkdir final
+          find artifacts -type f \( -name '*.bin' -o -name '*.apk' \) -exec cp '{}' final/ \;
+          test "$(find final -maxdepth 1 -name '*.bin' | wc -l)" -eq 3
+          test "$(find final -maxdepth 1 -name '*.apk' | wc -l)" -eq 1
+          for t in esp32s3 esp32c6 esp32; do test -s "final/ESPhub_Zero_${t}_FULL.bin"; done
+          test -s final/WIFIray_STAGE4_debug.apk
+          (cd final && sha256sum *.apk *.bin > SHA256SUMS_ALL.txt && sha256sum -c SHA256SUMS_ALL.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WIFIray-Stage4-APK-and-3-FULL-BIN-candidate
+          path: final/
+          if-no-files-found: error
+          retention-days: 30
