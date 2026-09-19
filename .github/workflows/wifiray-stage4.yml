@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip'
+      - '.github/workflows/wifiray-stage4.yml'
   workflow_dispatch:
 
 permissions:
@@ -24,7 +25,7 @@ jobs:
           set -euo pipefail
           test -s ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip
           echo 'b4debb6189a9bd999d507aeb052bcd12bbc2a180a7582135bad392674090df7e  ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip' | sha256sum -c -
-          unzip -q ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip -d .
+          unzip -qo ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip -d .
           sha256sum -c SHA256_MANIFEST.txt
       - uses: actions/setup-python@v5
         with:
@@ -55,7 +56,7 @@ jobs:
           set -euo pipefail
           test -s ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip
           echo 'b4debb6189a9bd999d507aeb052bcd12bbc2a180a7582135bad392674090df7e  ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip' | sha256sum -c -
-          unzip -q ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip -d .
+          unzip -qo ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip -d .
           sha256sum -c SHA256_MANIFEST.txt
       - uses: espressif/install-esp-idf-action@v1
         with:
@@ -98,7 +99,7 @@ jobs:
           set -euo pipefail
           test -s ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip
           echo 'b4debb6189a9bd999d507aeb052bcd12bbc2a180a7582135bad392674090df7e  ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip' | sha256sum -c -
-          unzip -q ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip -d .
+          unzip -qo ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip -d .
           sha256sum -c SHA256_MANIFEST.txt
       - uses: actions/setup-java@v4
         with:
