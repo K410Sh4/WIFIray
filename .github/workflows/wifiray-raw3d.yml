@@ -4,7 +4,6 @@ on:
   push:
     paths:
       - 'WIFIray_RawCSI_3D_STAGE5_SOURCE.zip'
-      - '.github/workflows/wifiray-raw3d.yml'
   workflow_dispatch:
 
 permissions:
