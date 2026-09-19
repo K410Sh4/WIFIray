@@ -1,0 +1,58 @@
+name: WIFIray | Android screenshots after secure key entry
+
+on:
+  push:
+    paths:
+      - 'screenshots/**'
+      - '.github/workflows/android-screenshot-debug.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wifiray-android-screenshot-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore verified Stage 4 sources into isolated directory
+        run: |
+          set -euo pipefail
+          test -s ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip
+          echo 'b4debb6189a9bd999d507aeb052bcd12bbc2a180a7582135bad392674090df7e  ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip' | sha256sum -c -
+          mkdir source
+          unzip -q ESPhub_Zero_STAGE4_AUDITED_BUILD_SOURCES.zip -d source
+          (cd source && sha256sum -c SHA256_MANIFEST.txt)
+      - name: Apply secure screenshot policy and assert ordering
+        run: |
+          set -euo pipefail
+          cd source
+          python3 ../screenshots/apply_screenshot_policy.py
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Compile Android screenshot-capable debug APK
+        working-directory: source/android
+        run: gradle --no-daemon --stacktrace :app:assembleDebug
+      - name: Validate and hash APK
+        run: |
+          set -euo pipefail
+          test -s source/android/app/build/outputs/apk/debug/app-debug.apk
+          mkdir -p dist
+          cp source/android/app/build/outputs/apk/debug/app-debug.apk dist/WIFIray_STAGE4_diagnostics_screenshots_debug.apk
+          (cd dist && sha256sum *.apk > SHA256SUMS.txt && sha256sum -c SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WIFIray-Android-Diagnostics-Screenshots-DEBUG
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
