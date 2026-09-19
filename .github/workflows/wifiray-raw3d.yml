@@ -1,0 +1,158 @@
+name: WIFIray | Raw CSI + 3D gated build
+
+on:
+  push:
+    paths:
+      - 'WIFIray_RawCSI_3D_STAGE5_SOURCE.zip'
+      - '.github/workflows/wifiray-raw3d.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wifiray-raw3d-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify and extract audited source
+        run: |
+          set -euo pipefail
+          test -s WIFIray_RawCSI_3D_STAGE5_SOURCE.zip
+          echo '2971478c7729b44dd912b5e1f901950e70c48be98cb9e4a4bb462b24c5faaaa1  WIFIray_RawCSI_3D_STAGE5_SOURCE.zip' | sha256sum -c -
+          mkdir src
+          unzip -q WIFIray_RawCSI_3D_STAGE5_SOURCE.zip -d src
+          (cd src && sha256sum -c SHA256_MANIFEST.txt)
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install host dependency
+        run: python -m pip install cryptography==46.0.7
+      - name: Enforce Kotlin compiler
+        run: command -v kotlinc
+      - name: C++ ASan/UBSan, Python and Kotlin raw CSI tests
+        working-directory: src
+        run: bash ci/test_local.sh
+
+  firmware:
+    name: ESP-IDF ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [esp32s3, esp32c6, esp32]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify and extract audited source
+        run: |
+          set -euo pipefail
+          test -s WIFIray_RawCSI_3D_STAGE5_SOURCE.zip
+          echo '2971478c7729b44dd912b5e1f901950e70c48be98cb9e4a4bb462b24c5faaaa1  WIFIray_RawCSI_3D_STAGE5_SOURCE.zip' | sha256sum -c -
+          mkdir src
+          unzip -q WIFIray_RawCSI_3D_STAGE5_SOURCE.zip -d src
+          (cd src && sha256sum -c SHA256_MANIFEST.txt)
+      - uses: espressif/install-esp-idf-action@v1
+        with:
+          version: v5.5.1
+      - name: Build and merge FULL image for exact target
+        working-directory: src/firmware
+        run: |
+          set -euo pipefail
+          test ! -e sdkconfig
+          idf.py set-target '${{ matrix.target }}'
+          idf.py build
+          idf.py merge-bin -o 'ESPhub_Zero_${{ matrix.target }}_FULL.bin' -f raw
+      - name: Validate chip, partition, bootloader, and SHA-256
+        working-directory: src
+        run: |
+          set -euo pipefail
+          python ci/verify_firmware.py --target '${{ matrix.target }}' | tee firmware/build/INTEGRITY.json
+          cd firmware/build
+          sha256sum 'ESPhub_Zero_${{ matrix.target }}_FULL.bin' > SHA256SUMS.txt
+          test -s flasher_args.json
+          test -s bootloader/bootloader.bin
+          test -s partition_table/partition-table.bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wifiray-raw3d-${{ matrix.target }}
+          path: |
+            src/firmware/build/ESPhub_Zero_${{ matrix.target }}_FULL.bin
+            src/firmware/build/INTEGRITY.json
+            src/firmware/build/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify and extract audited source
+        run: |
+          set -euo pipefail
+          test -s WIFIray_RawCSI_3D_STAGE5_SOURCE.zip
+          echo '2971478c7729b44dd912b5e1f901950e70c48be98cb9e4a4bb462b24c5faaaa1  WIFIray_RawCSI_3D_STAGE5_SOURCE.zip' | sha256sum -c -
+          mkdir src
+          unzip -q WIFIray_RawCSI_3D_STAGE5_SOURCE.zip -d src
+          (cd src && sha256sum -c SHA256_MANIFEST.txt)
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Compile Android debug APK
+        working-directory: src/android
+        run: gradle --no-daemon --stacktrace :app:assembleDebug
+      - name: Collect verified APK
+        run: |
+          set -euo pipefail
+          test -s src/android/app/build/outputs/apk/debug/app-debug.apk
+          mkdir -p dist
+          cp src/android/app/build/outputs/apk/debug/app-debug.apk dist/WIFIray_RAW3D_debug.apk
+          (cd dist && sha256sum *.apk > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wifiray-raw3d-android
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  package:
+    name: Publish only after all host and device-target builds pass
+    needs: [quality, firmware, android]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wifiray-raw3d-*
+          path: artifacts
+          merge-multiple: false
+      - name: Enforce 1 APK and 3 FULL.bin plus checksums
+        run: |
+          set -euo pipefail
+          mkdir final
+          find artifacts -type f \( -name '*.bin' -o -name '*.apk' \) -exec cp '{}' final/ \;
+          test "$(find final -maxdepth 1 -name '*.bin' | wc -l)" -eq 3
+          test "$(find final -maxdepth 1 -name '*.apk' | wc -l)" -eq 1
+          for t in esp32s3 esp32c6 esp32; do test -s "final/ESPhub_Zero_${t}_FULL.bin"; done
+          test -s final/WIFIray_RAW3D_debug.apk
+          (cd final && sha256sum *.bin *.apk > SHA256SUMS_ALL.txt && sha256sum -c SHA256SUMS_ALL.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WIFIray-RawCSI-3D-APK-and-3-FULL-BIN-candidate
+          path: final/
+          if-no-files-found: error
+          retention-days: 30
