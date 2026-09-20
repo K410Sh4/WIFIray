@@ -1,0 +1,74 @@
+name: WIFIray | Universal Flash Windows EXE
+
+on:
+  push:
+    paths:
+      - 'WIFIray_Universal_Flash_SOURCE.zip'
+      - '.github/workflows/build-universal-flash.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-exe:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify source package before running code
+        shell: pwsh
+        run: |
+          if (!(Test-Path 'WIFIray_Universal_Flash_SOURCE.zip')) { throw 'Source ZIP not uploaded' }
+          $expected='0e8020bb8dc63add1ab18e4c7c3432fe3218bea32abde9f04c19450ab28c3e29'
+          $actual=(Get-FileHash 'WIFIray_Universal_Flash_SOURCE.zip' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "Source SHA256 mismatch: $actual" }
+          New-Item -ItemType Directory -Path 'universal-flash' | Out-Null
+          Expand-Archive -LiteralPath 'WIFIray_Universal_Flash_SOURCE.zip' -DestinationPath 'universal-flash'
+          foreach ($p in @('flash_core.py','flash_gui.py','test_flash_core.py','README.md')) {
+            if (!(Test-Path "universal-flash/$p")) { throw "Missing $p" }
+          }
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: 'x64'
+      - name: Install pinned Windows build dependencies
+        run: python -m pip install pyinstaller==6.16.0 esptool==5.4.0 pyserial==3.5
+      - name: Validate source and flashing safety tests
+        working-directory: universal-flash
+        run: |
+          python -m compileall -q flash_core.py flash_gui.py
+          python -m unittest -v test_flash_core.py
+      - name: Produce standalone single-file Windows executable
+        working-directory: universal-flash
+        run: >
+          python -m PyInstaller
+          --clean --noconfirm --onefile --windowed
+          --name WIFIray_Universal_Flash
+          --collect-all esptool
+          --collect-all serial
+          flash_gui.py
+      - name: Smoke test actual frozen EXE and calculate integrity hash
+        working-directory: universal-flash
+        shell: pwsh
+        run: |
+          $path='dist/WIFIray_Universal_Flash.exe'
+          if (!(Test-Path $path)) { throw 'Windows .exe not produced' }
+          $bytes=[System.IO.File]::ReadAllBytes((Resolve-Path $path))
+          if ($bytes.Length -lt 1048576 -or $bytes[0] -ne 77 -or $bytes[1] -ne 90) { throw 'Executable header or size invalid' }
+          $proc=Start-Process -FilePath (Resolve-Path $path).Path -ArgumentList @('--self-test','smoke.txt') -Wait -PassThru
+          if ($proc.ExitCode -ne 0) { throw "EXE smoke test failed: $($proc.ExitCode)" }
+          if (!(Test-Path 'smoke.txt')) { throw 'Frozen imports smoke marker not written' }
+          $marker=Get-Content 'smoke.txt' -Raw
+          if (!$marker.Contains('PASS: bundled esptool + serial + flash core')) { throw 'Frozen imports failed' }
+          $sha=(Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$sha  WIFIray_Universal_Flash.exe" | Set-Content -Encoding ascii 'dist/SHA256SUMS.txt'
+          Get-Content 'dist/SHA256SUMS.txt'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WIFIray_Universal_Flash_Windows_x64
+          path: |
+            universal-flash/dist/WIFIray_Universal_Flash.exe
+            universal-flash/dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
