@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - 'WIFIray_RawCSI_3D_STAGE5_SOURCE.zip'
+      - '.github/workflows/wifiray-raw3d.yml'
+      - 'build-overlay/raw_csi_c6_fix.py'
   workflow_dispatch:
 
 permissions:
@@ -60,6 +62,7 @@ jobs:
           mkdir src
           unzip -q WIFIray_RawCSI_3D_STAGE5_SOURCE.zip -d src
           (cd src && sha256sum -c SHA256_MANIFEST.txt)
+          python3 build-overlay/raw_csi_c6_fix.py
       - uses: espressif/install-esp-idf-action@v1
         with:
           version: v5.5.1
