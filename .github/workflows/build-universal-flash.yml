@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'WIFIray_Universal_Flash_SOURCE.zip'
+      - 'universal-flash/WIFIray_Universal_Flash_SOURCE.zip.b64'
       - '.github/workflows/build-universal-flash.yml'
   workflow_dispatch:
 
@@ -19,7 +20,12 @@ jobs:
       - name: Verify source package before running code
         shell: pwsh
         run: |
-          if (!(Test-Path 'WIFIray_Universal_Flash_SOURCE.zip')) { throw 'Source ZIP not uploaded' }
+          $payload='universal-flash/WIFIray_Universal_Flash_SOURCE.zip.b64'
+          if (Test-Path $payload) {
+            $encoded=((Get-Content $payload -Raw) -replace '\\s','')
+            [IO.File]::WriteAllBytes('WIFIray_Universal_Flash_SOURCE.zip',[Convert]::FromBase64String($encoded))
+          }
+          if (!(Test-Path 'WIFIray_Universal_Flash_SOURCE.zip')) { throw 'Verified source ZIP is missing' }
           $expected='0e8020bb8dc63add1ab18e4c7c3432fe3218bea32abde9f04c19450ab28c3e29'
           $actual=(Get-FileHash 'WIFIray_Universal_Flash_SOURCE.zip' -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($actual -ne $expected) { throw "Source SHA256 mismatch: $actual" }
